@@ -1,0 +1,72 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hearthis-down"
+dynamic = ["version"]
+description = ''
+readme = "README.md"
+requires-python = ">=3.8"
+license = "MIT"
+keywords = []
+authors = [
+  { name = "jonnieey", email = "johnjahi55@gmail.com" },
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: Implementation :: CPython",
+  "Programming Language :: Python :: Implementation :: PyPy",
+]
+dependencies = [
+  "aiohttp",
+  "yt-dlp",
+  "xdg-base-dirs",
+  "pyhearthis @ git+https://github.com/universalappfactory/pyhearthis"
+
+]
+
+[project.urls]
+Documentation = "https://github.com/jonnieey/hearthis-down#readme"
+Issues = "https://github.com/jonnieey/hearthis-down/issues"
+Source = "https://github.com/jonnieey/hearthis-down"
+
+[tool.hatch.version]
+path = "src/hearthis_down/__about__.py"
+
+[tool.hatch.envs.types]
+extra-dependencies = [
+  "mypy>=1.0.0",
+]
+[tool.hatch.envs.types.scripts]
+check = "mypy --install-types --non-interactive {args:src/hearthis_down tests}"
+
+[tool.coverage.run]
+source_pkgs = ["hearthis_down", "tests"]
+branch = true
+parallel = true
+omit = [
+  "src/hearthis_down/__about__.py",
+]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.coverage.paths]
+hearthis_down = ["src/hearthis_down", "*/hearthis-down/src/hearthis_down"]
+tests = ["tests", "*/hearthis-down/tests"]
+
+[tool.coverage.report]
+exclude_lines = [
+  "no cov",
+  "if __name__ == .__main__.:",
+  "if TYPE_CHECKING:",
+]
+[project.scripts]
+  htd = "hearthis_down.hearthis_down:run"
