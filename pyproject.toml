@@ -7,7 +7,7 @@ name = "hearthis-down"
 dynamic = ["version"]
 description = ''
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 license = "MIT"
 keywords = []
 authors = [
@@ -28,8 +28,7 @@ dependencies = [
   "aiohttp",
   "yt-dlp",
   "xdg-base-dirs",
-  "pyhearthis @ git+https://github.com/universalappfactory/pyhearthis"
-
+  "pyhearthis @ git+https://github.com/jonnieey/pyhearthis"
 ]
 
 [project.urls]
