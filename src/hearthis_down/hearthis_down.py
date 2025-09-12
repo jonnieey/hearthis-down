@@ -4,6 +4,7 @@ Professional HearThis.at Downloader
 
 Features:
 - Download all tracks from an artist or a single track from a URL
+- Save files in artist-specific folders: audio_dir/artist/title.ext
 - Async download with configurable concurrency
 - Comprehensive error handling and logging
 - Configurable download directory and formats
@@ -80,7 +81,7 @@ class HearThisDownloader:
 
     def __init__(self, config):
         self.config = config
-        self.audio_dir = Path(
+        self.base_audio_dir = Path(
             config.get("audio_dir", "~/Music/hearthisat")
         ).expanduser()
         self.max_concurrent = int(config.get("max_concurrent_downloads", "3"))
@@ -93,15 +94,17 @@ class HearThisDownloader:
 
     async def initialize(self):
         """Initialize the downloader"""
-        self.audio_dir.mkdir(parents=True, exist_ok=True)
+        self.base_audio_dir.mkdir(parents=True, exist_ok=True)
         # Load already downloaded files
         self._load_downloaded_files()
 
     def _load_downloaded_files(self):
         """Load already downloaded files to avoid re-downloading"""
-        for ext in [".mp3", ".m4a", ".flac", ".wav", ".ogg"]:
-            for file in self.audio_dir.rglob(f"*{ext}"):
-                self.downloaded_files.add(file.stem)
+        for artist_dir in self.base_audio_dir.iterdir():
+            if artist_dir.is_dir():
+                for ext in [".mp3", ".m4a", ".flac", ".wav", ".ogg"]:
+                    for file in artist_dir.glob(f"*{ext}"):
+                        self.downloaded_files.add(file.stem)
 
     def extract_info_from_url(self, url: str) -> Tuple[Optional[str], Optional[str]]:
         """Extract artist and track information from a HearThis URL"""
@@ -117,19 +120,11 @@ class HearThisDownloader:
 
         # Handle different URL formats:
         # 1. https://hearthis.at/artist/track/
-        # 2. https://hearthis.at/artist/set/setname/
         if len(path_parts) >= 2:
             artist = path_parts[0]
-            # If it's a set, we can't download individual tracks from the set URL
-            if "set" in path_parts and len(path_parts) > 2:
-                logger.warning(
-                    "Set URLs are not supported for individual track downloads"
-                )
-                return artist, None
-            else:
-                # Assume the last part is the track name
-                track = path_parts[-1]
-                return artist, track
+            # Assume the last part is the track name
+            track = path_parts[-1]
+            return artist, track
 
         return None, None
 
@@ -179,7 +174,9 @@ class HearThisDownloader:
                 logger.error(f"Error fetching tracks: {e}")
                 return []
 
-    async def download_track(self, session, url: str, retry_count: int = 0) -> bool:
+    async def download_track(
+        self, session, url: str, artist: Optional[str] = None, retry_count: int = 0
+    ) -> bool:
         """Download a single track with retry logic"""
         if retry_count >= self.max_retries:
             logger.error(f"Max retries exceeded for {url}")
@@ -187,19 +184,33 @@ class HearThisDownloader:
 
         async with self.semaphore:
             try:
-                # Extract info to check if already downloaded
+                # Extract info to check if already downloaded and get artist if not provided
                 with yt_dlp.YoutubeDL({"quiet": True, "simulate": True}) as ydl:
                     info = await asyncio.to_thread(
                         ydl.extract_info, url, download=False
                     )
+
+                    # If artist not provided, try to extract from URL
+                    if artist is None:
+                        url_artist, _ = self.extract_info_from_url(url)
+                        artist = url_artist or info.get("uploader", "UnknownArtist")
+
+                    # Normalize artist name for folder
+                    artist_folder = artist.lower().replace(" ", "-")
+
+                    # Check if already downloaded
                     if info.get("title") in self.downloaded_files:
                         logger.info(f"Skipping already downloaded: {info.get('title')}")
                         return True
 
+                # Create artist directory
+                artist_dir = self.base_audio_dir / artist_folder
+                artist_dir.mkdir(parents=True, exist_ok=True)
+
                 # Download the track
                 ydl_opts = {
                     "format": self.format,
-                    "outtmpl": str(self.audio_dir / "%(title)s.%(ext)s"),
+                    "outtmpl": str(artist_dir / "%(title)s.%(ext)s"),
                     "quiet": False,
                     "no_warnings": False,
                     "continuedl": True,
@@ -212,36 +223,34 @@ class HearThisDownloader:
                     },
                 }
 
-                logger.info(f"Downloading: {url}")
+                logger.info(f"Downloading to {artist_dir}: {url}")
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     await asyncio.to_thread(ydl.download, [url])
 
                 # Add to downloaded files
-                with yt_dlp.YoutubeDL({"quiet": True, "simulate": True}) as ydl:
-                    info = await asyncio.to_thread(
-                        ydl.extract_info, url, download=False
-                    )
-                    self.downloaded_files.add(info.get("title"))
+                self.downloaded_files.add(info.get("title"))
 
                 return True
 
             except yt_dlp.utils.DownloadError as e:
                 logger.warning(f"Download error (attempt {retry_count + 1}): {e}")
                 await asyncio.sleep(2**retry_count)  # Exponential backoff
-                return await self.download_track(session, url, retry_count + 1)
+                return await self.download_track(session, url, artist, retry_count + 1)
 
             except Exception as e:
                 logger.error(f"Unexpected error downloading {url}: {e}")
                 return False
 
-    async def download_tracks_async(self, urls: List[str]):
+    async def download_tracks_async(
+        self, urls: List[str], artist: Optional[str] = None
+    ):
         """Download all tracks concurrently with rate limiting"""
         if not urls:
             logger.warning("No tracks to download")
             return
 
         async with aiohttp.ClientSession() as session:
-            tasks = [self.download_track(session, url) for url in urls]
+            tasks = [self.download_track(session, url, artist) for url in urls]
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
             successful = sum(1 for r in results if r is True)
@@ -261,7 +270,6 @@ def parse_args():
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
     group.add_argument("--quiet", "-q", action="store_true", help="Quiet output")
-
     return parser.parse_args()
 
 
@@ -296,7 +304,7 @@ async def main():
     if args.quiet:
         logging.getLogger().setLevel(logging.CRITICAL)
 
-    # Validate credentials (only needed for artist downloads)
+    # Initialize downloader
     downloader = HearThisDownloader(config)
     await downloader.initialize()
 
@@ -322,12 +330,12 @@ async def main():
 
         if tracks:
             logger.info(f"Starting download of {len(tracks)} tracks")
-            await downloader.download_tracks_async(tracks)
+            await downloader.download_tracks_async(tracks, artist)
         else:
             logger.warning("No tracks found to download")
 
 
-if __name__ == "__main__":
+def run():
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
@@ -336,3 +344,7 @@ if __name__ == "__main__":
     except Exception as e:
         logger.error(f"Fatal error: {e}")
         sys.exit(1)
+
+
+if __name__ == "__main__":
+    run()
