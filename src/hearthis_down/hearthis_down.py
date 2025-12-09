@@ -44,6 +44,7 @@ DEFAULT_CONFIG = {
     "max_retries": "3",
     "format": "bestaudio/best",
     "rate_limit": "1.0",  # seconds between requests
+    "max_tracks": "-1",  # -1 for all tracks
 }
 
 
@@ -128,7 +129,7 @@ class HearThisDownloader:
 
         return None, None
 
-    async def get_user_tracks(self, artist: str) -> List[str]:
+    async def get_user_tracks(self, artist: str, max_tracks: int = -1) -> List[str]:
         """Get all tracks for an artist"""
         async with aiohttp.ClientSession() as session:
             try:
@@ -149,6 +150,9 @@ class HearThisDownloader:
                 count = 20  # Max allowed by API
 
                 while True:
+                    if max_tracks != -1 and len(tracks) >= max_tracks:
+                        break
+
                     logger.info(f"Fetching page {page} of tracks for {artist}")
                     search_result = await hearthis.get_artist_tracks(
                         user, artist_search_result.permalink, page=page, count=count
@@ -157,7 +161,15 @@ class HearThisDownloader:
                     if not search_result or len(search_result) == 0:
                         break
 
-                    tracks.extend(search_result)
+                    remaining = (
+                        max_tracks - len(tracks)
+                        if max_tracks != -1
+                        else len(search_result)
+                    )
+                    if max_tracks != -1 and remaining < len(search_result):
+                        tracks.extend(search_result[:remaining])
+                    else:
+                        tracks.extend(search_result)
                     page += 1
 
                     # Rate limiting
@@ -211,7 +223,7 @@ class HearThisDownloader:
                 ydl_opts = {
                     "format": self.format,
                     "outtmpl": str(artist_dir / "%(title)s.%(ext)s"),
-                    "quiet": False,
+                    "quiet": True,
                     "no_warnings": False,
                     "continuedl": True,
                     "ignoreerrors": False,
@@ -266,10 +278,17 @@ def parse_args():
     parser.add_argument("--dir", help="Download directory")
     parser.add_argument("--concurrent", type=int, help="Max concurrent downloads")
     parser.add_argument("--format", help="Audio format preference")
+    parser.add_argument(
+        "--max-tracks",
+        "-n",
+        type=int,
+        help="Maximum number of tracks to download. -1 for all tracks.",
+    )
 
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
     group.add_argument("--quiet", "-q", action="store_true", help="Quiet output")
+
     return parser.parse_args()
 
 
@@ -297,6 +316,8 @@ async def main():
         config["max_concurrent_downloads"] = str(args.concurrent)
     if args.format:
         config["format"] = args.format
+    if args.max_tracks is not None:
+        config["max_tracks"] = str(args.max_tracks)
 
     # Set logging level
     if args.verbose:
@@ -326,7 +347,8 @@ async def main():
 
         # Get and download tracks
         logger.info(f"Fetching tracks for artist: {artist}")
-        tracks = await downloader.get_user_tracks(artist)
+        max_tracks = int(config.get("max_tracks", "-1"))
+        tracks = await downloader.get_user_tracks(artist, max_tracks)
 
         if tracks:
             logger.info(f"Starting download of {len(tracks)} tracks")
